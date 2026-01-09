@@ -51,11 +51,14 @@ jobs:
           }
 
           async function run() {
-            console.log('--- 启动万无一失模式 ---');
+            console.log('--- 启动诊断增强模式 ---');
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
               userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0',
-              viewport: { width: 1280, height: 800 }
+              extraHTTPHeaders: {
+                'X-Forwarded-For': '114.226.110.' + Math.floor(Math.random() * 254),
+                'Accept-Language': 'zh-CN,zh;q=0.9'
+              }
             });
 
             await context.addCookies([{
@@ -67,49 +70,41 @@ jobs:
 
             const page = await context.newPage();
             try {
-              console.log('1. 正在进入系统...');
-              await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
+              console.log('1. 进入页面...');
+              await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'load', timeout: 60000 });
               
-              const title = await page.title();
-              console.log('2. 页面标题确认:', title);
-
-              console.log('3. 等待数据渲染 (采用多重保障等待)...');
-              // 策略：等待 el-table 的行出现
-              await page.waitForSelector('.el-table__row', { timeout: 25000 }).catch(() => {
-                  console.log('警告：等待超时，尝试继续解析当前 DOM');
-              });
-
-              // 给 Vue 框架最后的渲染时间
-              await page.waitForTimeout(3000);
+              console.log('2. 等待内容 (强制等待15秒)...');
+              await page.waitForTimeout(15000);
 
               const html = await page.content();
               const $ = cheerio.load(html);
               const list = [];
               
-              console.log('4. 开始解析表格行...');
-              $('tr.el-table__row').each((i, el) => {
-                // 自动寻找第 1 列和第 3 列，不再依赖不稳定的 el-table_1_column_X
-                const cells = $(el).find('td .cell');
-                const num = cells.eq(0).text().trim(); // 第一列：号码
-                const sts = cells.eq(2).text().trim(); // 第三列：状态
-                
-                if (num && sts.includes('在线')) {
+              // 尝试更广泛的选择器匹配
+              const rows = $('tr');
+              console.log('3. 检测到页面所有 <tr> 数量:', rows.length);
+
+              rows.each((i, el) => {
+                const text = $(el).text();
+                if (text.includes('在线')) {
+                  const cells = $(el).find('td');
+                  const num = cells.eq(0).text().trim() || '未知号码';
                   list.push({ number: num, status: '在线' });
                 }
               });
 
-              console.log(`5. 抓取成功！发现在线号码: ${list.length} 个`);
+              console.log(`4. 最终抓取数量: ${list.length}`);
 
               if (list.length === 0) {
-                console.log('调试：未抓到号码。检查表格第一行文本：', $('tr.el-table__row').first().text().replace(/\s+/g, ' '));
+                console.log('--- 关键诊断信息 (页面Body预览) ---');
+                console.log($('body').text().replace(/\s+/g, ' ').substring(0, 500));
               }
 
-              console.log('6. 执行同步...');
-              const status = await pushData(list);
-              console.log('推送结果:', status);
+              await pushData(list);
+              console.log('5. 推送完成');
 
             } catch (e) {
-              console.error('❌ 执行过程中崩溃:', e.message);
+              console.error('❌ 执行报错:', e.message);
             } finally {
               await browser.close();
               console.log('--- 任务结束 ---');
