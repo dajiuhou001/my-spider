@@ -27,7 +27,6 @@ jobs:
         run: |
           cat << 'EOF' > spider_script.js
           const { chromium } = require('playwright');
-          const cheerio = require('cheerio');
           const http = require('http');
 
           function pushData(data) {
@@ -51,7 +50,7 @@ jobs:
           }
 
           async function run() {
-            console.log('--- 启动虚拟列表深度滑动采集 ---');
+            console.log('--- 启动网络嗅探捕获模式 ---');
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
               userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
@@ -65,59 +64,72 @@ jobs:
             }]);
 
             const page = await context.newPage();
+            let capturedData = null;
+
+            // 监听所有的网络响应
+            page.on('response', async (response) => {
+                const url = response.url();
+                // 寻找可能的 API 接口（通常包含 list, get, query 等关键词）
+                if (url.includes('/api/') || response.request().resourceType() === 'fetch') {
+                    try {
+                        const text = await response.text();
+                        if (text.includes('在线') || text.includes('number')) {
+                            console.log('发现疑似数据接口:', url);
+                            capturedData = JSON.parse(text);
+                        }
+                    } catch (e) {}
+                }
+            });
+
             try {
-              console.log('1. 进入系统...');
+              console.log('1. 进入页面并等待接口响应...');
               await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
               
-              // 等待表格渲染
-              await page.waitForSelector('.el-table__body-wrapper', { timeout: 20000 });
+              // 模拟滑动来触发表格请求数据
+              await page.mouse.wheel(0, 1000);
+              await page.waitForTimeout(10000);
 
-              const onlineNumbers = new Set();
-              console.log('2. 开始模拟滑动采集...');
-
-              // 在浏览器环境中执行滑动逻辑
-              for (let i = 0; i < 10; i++) { // 假设滑动10次能覆盖全表
-                // 获取当前页面的在线号码
-                const currentData = await page.evaluate(() => {
-                  const results = [];
-                  document.querySelectorAll('tr.el-table__row').forEach(row => {
-                    if (row.innerText.includes('在线')) {
-                      const cells = row.querySelectorAll('td .cell');
-                      if (cells.length > 0) {
-                        results.push(cells[0].innerText.trim());
-                      }
-                    }
-                  });
-                  return results;
-                });
-
-                // 加入去重集合
-                currentData.forEach(num => onlineNumbers.add(num));
-
-                // 执行滑动：寻找 ElementUI 的滚动容器并向下滚动 400 像素
-                await page.evaluate(() => {
-                  const scrollBox = document.querySelector('.el-table__body-wrapper');
-                  if (scrollBox) {
-                    scrollBox.scrollTop += 400;
-                  } else {
-                    window.scrollBy(0, 400); // 备用方案
+              const list = [];
+              
+              // 如果抓到了 JSON 数据，直接解析 JSON
+              if (capturedData) {
+                  console.log('2. 正在解析捕获到的 JSON 数据...');
+                  // 这里需要根据实际接口结构调整，通常数据在 data 或 list 字段里
+                  const rawList = capturedData.data || capturedData.list || capturedData;
+                  if (Array.isArray(rawList)) {
+                      rawList.forEach(item => {
+                          // 根据常见字段名匹配
+                          const num = item.number || item.account || item.phone;
+                          const status = item.status || item.state;
+                          if (num && String(status).includes('在线')) {
+                              list.push({ number: String(num), status: '在线' });
+                          }
+                      });
                   }
-                });
-
-                await page.waitForTimeout(1500); // 等待异步加载渲染
               }
 
-              const finalData = Array.from(onlineNumbers).map(num => ({ number: num, status: '在线' }));
-              console.log(`3. 深度采集完成！共抓取到 ${finalData.length} 个不重复的在线号码`);
-              console.log('具体号码:', Array.from(onlineNumbers).join(', '));
+              // 备用：如果 API 没捕获到，尝试直接扫描 DOM 中的所有文字
+              if (list.length === 0) {
+                  console.log('2. API 捕获为空，尝试全文本正则表达式提取...');
+                  const bodyText = await page.innerText('body');
+                  // 匹配：连续数字 + 空格/换行 + 在线
+                  const regex = /(\d{5,})\s+在线/g;
+                  let match;
+                  while ((match = regex.exec(bodyText)) !== null) {
+                      list.push({ number: match[1], status: '在线' });
+                  }
+              }
 
-              if (finalData.length > 0) {
-                const status = await pushData(finalData);
-                console.log('4. 推送状态:', status);
+              console.log(`3. 最终汇总在线号码: ${list.length} 个`);
+              if (list.length > 0) {
+                  console.log('抓取到的列表:', list.map(i => i.number).join(', '));
+                  await pushData(list);
+              } else {
+                  console.log('无法在页面文本中找到符合 "数字 + 在线" 格式的内容');
               }
 
             } catch (e) {
-              console.error('❌ 执行失败:', e.message);
+              console.error('❌ 任务失败:', e.message);
             } finally {
               await browser.close();
             }
