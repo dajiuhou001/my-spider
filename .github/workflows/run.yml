@@ -1,8 +1,8 @@
 name: Auto Spider Bot
 on:
   schedule:
-    - cron: '*/15 * * * *' # 每15分钟自动跑一次
-  workflow_dispatch:      # 允许你手动点按钮运行
+    - cron: '*/15 * * * *' # 每15分钟运行一次
+  workflow_dispatch:      # 允许手动触发
 
 jobs:
   run_spider:
@@ -19,34 +19,49 @@ jobs:
       - name: Install dependencies
         run: npm install axios cheerio
 
-      - name: Run Scraping Script
+      - name: Create Script File
+        # 这里使用 cat 命令创建文件，完美避免引号冲突
         run: |
-          node -e "
+          cat << 'EOF' > spider_script.js
           const axios = require('axios');
           const cheerio = require('cheerio');
+
           async function run() {
+            console.log('--- 启动爬虫任务 ---');
             try {
               // 1. 抓取目标网站
               const res = await axios.post('https://s.url99.me/7cnr519a', 'password=160301', {
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-              });
-              const $ = cheerio.load(res.data);
-              const list = [];
-              $('tr.el-table__row').each((i, el) => {
-                const number = \$(el).find('.el-table_1_column_1 .cell').text().trim();
-                const status = \$(el).find('.el-table_1_column_3 .cell span').text().trim();
-                if (status === '在线' && number) {
-                  list.push({ number, status });
+                headers: { 
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 }
               });
-              console.log('抓取到在线号码数量:', list.length);
+
+              const $ = cheerio.load(res.data);
+              const list = [];
               
-              // 2. 推送给你宝塔上的接收接口 (请确保你宝塔上的代码已更新为我上次给你的接收版)
-              await axios.post('http://http://204.141.218.119/:4000/api/update', { data: list });
-              console.log('已成功推送到服务器');
+              $('tr.el-table__row').each((i, el) => {
+                const number = $(el).find('.el-table_1_column_1 .cell').text().trim();
+                const status = $(el).find('.el-table_1_column_3 .cell span').text().trim();
+                if (status.includes('在线') && number) {
+                  list.push({ number, status: '在线' });
+                }
+              });
+
+              console.log('抓取成功，在线号码数量:', list.length);
+
+              // 2. 推送到宝塔服务器
+              // 注意：IP 地址已修正（去掉了多余的 http://）
+              await axios.post('http://204.141.218.119:4000/api/update', { data: list });
+              console.log('数据已成功同步至宝塔服务器');
+
             } catch (e) {
-              console.error('任务失败:', e.message);
+              console.error('任务执行失败:', e.message);
+              process.exit(1);
             }
           }
           run();
-          "
+          EOF
+
+      - name: Execute Script
+        run: node spider_script.js
