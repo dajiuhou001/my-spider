@@ -2,8 +2,8 @@ name: Auto Spider Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
+    - cron: '*/15 * * * *' # 每15分钟运行一次
+  workflow_dispatch:      # 支持手动触发
 
 jobs:
   run_spider:
@@ -30,7 +30,7 @@ jobs:
           const cheerio = require('cheerio');
           const http = require('http');
 
-          // 核心函数：使用原生 http 模块发送数据，避免 axios 的环境报错
+          // 推送函数：将数据发送到你的宝塔服务器
           function pushData(data) {
             return new Promise((resolve, reject) => {
               const postData = JSON.stringify({ data });
@@ -45,7 +45,7 @@ jobs:
                 }
               };
               const req = http.request(options, (res) => {
-                resolve('Status: ' + res.statusCode);
+                resolve('Server Status: ' + res.statusCode);
               });
               req.on('error', (e) => reject(e));
               req.write(postData);
@@ -56,10 +56,13 @@ jobs:
           async function run() {
             console.log('--- 启动 Playwright 引擎 ---');
             const browser = await chromium.launch({ headless: true });
+            
+            // 使用你提供的最新 User-Agent
             const context = await browser.newContext({
               userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
             });
 
+            // 注入你提供的最新 Cookie
             await context.addCookies([{
               name: 'cf_clearance',
               value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
@@ -70,12 +73,17 @@ jobs:
             const page = await context.newPage();
 
             try {
-              console.log('1. 正在访问页面...');
+              console.log('1. 正在尝试绕过 Cloudflare 访问页面...');
+              // 增加到 60s 超时以应对较慢的五秒盾
               await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
 
-              // 【关键】增加显式等待，确保内容不是空的
+              // 2. 核心：等待表格行渲染（最多等15秒）
               console.log('2. 等待内容加载...');
-              await page.waitForTimeout(10000); 
+              try {
+                await page.waitForSelector('tr.el-table__row', { timeout: 15000 });
+              } catch (e) {
+                console.log('提示：未发现表格行，可能是目前没号码或被彻底拦截');
+              }
 
               const html = await page.content();
               const $ = cheerio.load(html);
@@ -89,19 +97,16 @@ jobs:
                 }
               });
 
-              console.log('抓取成功，发现在线数量:', list.length);
+              console.log('抓取成功，在线号码数量:', list.length);
 
-              if (list.length === 0) {
-                 console.log('警告：抓取结果为0，可能是Cookie过期或当前无在线号码');
-              }
-
-              console.log('3. 正在同步到服务器 (原生模式)...');
+              // 3. 同步到宝塔
+              console.log('3. 执行同步...');
               const result = await pushData(list);
-              console.log('服务器响应:', result);
-              console.log('--- 任务结束 ---');
+              console.log('结果回复:', result);
+              console.log('--- 流程结束 ---');
 
             } catch (e) {
-              console.error('❌ 错误:', e.message);
+              console.error('❌ 运行失败:', e.message);
               process.exit(1);
             } finally {
               await browser.close();
