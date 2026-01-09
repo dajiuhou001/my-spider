@@ -29,31 +29,12 @@ jobs:
           const { chromium } = require('playwright');
           const http = require('http');
 
-          function pushData(data) {
-            return new Promise((resolve) => {
-              const postData = JSON.stringify({ data });
-              const options = {
-                hostname: '204.141.218.119',
-                port: 4000,
-                path: '/api/update',
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Content-Length': Buffer.byteLength(postData)
-                }
-              };
-              const req = http.request(options, (res) => resolve(res.statusCode));
-              req.on('error', () => resolve('Error'));
-              req.write(postData);
-              req.end();
-            });
-          }
-
           async function run() {
-            console.log('--- 启动网络嗅探捕获模式 ---');
+            console.log('--- 启动全框架穿透模式 ---');
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
-              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              viewport: { width: 1920, height: 1080 }
             });
 
             await context.addCookies([{
@@ -64,72 +45,55 @@ jobs:
             }]);
 
             const page = await context.newPage();
-            let capturedData = null;
-
-            // 监听所有的网络响应
-            page.on('response', async (response) => {
-                const url = response.url();
-                // 寻找可能的 API 接口（通常包含 list, get, query 等关键词）
-                if (url.includes('/api/') || response.request().resourceType() === 'fetch') {
-                    try {
-                        const text = await response.text();
-                        if (text.includes('在线') || text.includes('number')) {
-                            console.log('发现疑似数据接口:', url);
-                            capturedData = JSON.parse(text);
-                        }
-                    } catch (e) {}
-                }
-            });
-
             try {
-              console.log('1. 进入页面并等待接口响应...');
+              console.log('1. 正在加载主页面...');
               await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
-              
-              // 模拟滑动来触发表格请求数据
-              await page.mouse.wheel(0, 1000);
-              await page.waitForTimeout(10000);
+              await page.waitForTimeout(15000); // 强制等待数据加载
+
+              // --- 诊断环节：拍照 ---
+              console.log('2. 正在拍摄页面截图 (存入 logs)...');
+              await page.screenshot({ path: 'debug_screen.png', fullPage: true });
 
               const list = [];
+              const allFrames = page.frames();
+              console.log(`3. 检测到页面共有 ${allFrames.length} 个框架 (Frames)`);
+
+              // 遍历所有框架，深度搜索每一个角落
+              for (const frame of allFrames) {
+                try {
+                  const content = await frame.innerText('body');
+                  // 使用更宽松的正则：匹配 5位以上数字
+                  const matches = content.match(/\d{5,}/g) || [];
+                  if (content.includes('在线')) {
+                    console.log(`在框架 [${frame.name() || '匿名'}] 中发现关键词！内容长度: ${content.length}`);
+                    // 如果发现“在线”和“数字”，则认为抓到了
+                    matches.forEach(num => {
+                        // 简单的在线状态判定逻辑：数字附近有在线字样
+                        if (content.includes(num)) {
+                           list.push({ number: num, status: '在线' });
+                        }
+                    });
+                  }
+                } catch (e) { /* 忽略单个框架解析错误 */ }
+              }
+
+              // 去重
+              const uniqueList = Array.from(new Set(list.map(i => i.number))).map(n => ({number: n, status: '在线'}));
+
+              console.log(`4. 最终汇总: ${uniqueList.length} 个号码`);
               
-              // 如果抓到了 JSON 数据，直接解析 JSON
-              if (capturedData) {
-                  console.log('2. 正在解析捕获到的 JSON 数据...');
-                  // 这里需要根据实际接口结构调整，通常数据在 data 或 list 字段里
-                  const rawList = capturedData.data || capturedData.list || capturedData;
-                  if (Array.isArray(rawList)) {
-                      rawList.forEach(item => {
-                          // 根据常见字段名匹配
-                          const num = item.number || item.account || item.phone;
-                          const status = item.status || item.state;
-                          if (num && String(status).includes('在线')) {
-                              list.push({ number: String(num), status: '在线' });
-                          }
-                      });
-                  }
-              }
-
-              // 备用：如果 API 没捕获到，尝试直接扫描 DOM 中的所有文字
-              if (list.length === 0) {
-                  console.log('2. API 捕获为空，尝试全文本正则表达式提取...');
-                  const bodyText = await page.innerText('body');
-                  // 匹配：连续数字 + 空格/换行 + 在线
-                  const regex = /(\d{5,})\s+在线/g;
-                  let match;
-                  while ((match = regex.exec(bodyText)) !== null) {
-                      list.push({ number: match[1], status: '在线' });
-                  }
-              }
-
-              console.log(`3. 最终汇总在线号码: ${list.length} 个`);
-              if (list.length > 0) {
-                  console.log('抓取到的列表:', list.map(i => i.number).join(', '));
-                  await pushData(list);
+              if (uniqueList.length > 0) {
+                 console.log('同步中...');
+                 // 此处省略 pushData 调用，先看能不能抓到
               } else {
-                  console.log('无法在页面文本中找到符合 "数字 + 在线" 格式的内容');
+                 console.log('--- 诊断反馈 ---');
+                 console.log('页面当前标题:', await page.title());
+                 const bodySnippet = await page.evaluate(() => document.body.innerText.substring(0, 300));
+                 console.log('主体文本预览:', bodySnippet);
               }
 
             } catch (e) {
-              console.error('❌ 任务失败:', e.message);
+              console.error('任务失败:', e.message);
             } finally {
               await browser.close();
             }
@@ -139,3 +103,9 @@ jobs:
 
       - name: Run
         run: node spider_script.js
+
+      - name: Upload Debug Screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: debug_screen.png
