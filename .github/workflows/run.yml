@@ -1,4 +1,29 @@
-- name: Create Script File
+name: Auto Spider Bot
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run_spider:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install Libs
+        run: npm install playwright cheerio
+
+      - name: Install Browser
+        run: npx playwright install chromium --with-deps
+
+      - name: Create Script
         run: |
           cat << 'EOF' > spider_script.js
           const { chromium } = require('playwright');
@@ -6,7 +31,7 @@
           const http = require('http');
 
           function pushData(data) {
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
               const postData = JSON.stringify({ data });
               const options = {
                 hostname: '204.141.218.119',
@@ -18,22 +43,19 @@
                   'Content-Length': Buffer.byteLength(postData)
                 }
               };
-              const req = http.request(options, (res) => resolve('OK'));
-              req.on('error', (e) => reject(e));
+              const req = http.request(options, (res) => resolve(res.statusCode));
+              req.on('error', () => resolve('Connect Error'));
               req.write(postData);
               req.end();
             });
           }
 
           async function run() {
-            console.log('--- 启动深度模拟引擎 ---');
+            console.log('--- 启动诊断模式 ---');
             const browser = await chromium.launch({ headless: true });
-            
-            // 模拟一个更现代的 Edge 环境
             const context = await browser.newContext({
               userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0',
-              viewport: { width: 1920, height: 1080 },
-              deviceScaleFactor: 1,
+              viewport: { width: 1280, height: 720 }
             });
 
             await context.addCookies([{
@@ -44,51 +66,42 @@
             }]);
 
             const page = await context.newPage();
-
             try {
-              console.log('1. 正在加载页面...');
-              // 使用 networkidle 确保大部分资源加载完毕
+              console.log('正在加载页面...');
               await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
-
-              console.log('2. 模拟真人操作 (滚动/点击)...');
-              // 模拟滚动一下页面，有时能触发数据加载
-              await page.mouse.wheel(0, 500);
-              await page.waitForTimeout(5000); 
-
-              // 检查是否还在 Cloudflare 验证页
+              
               const title = await page.title();
               console.log('当前页面标题:', title);
 
-              if (title.includes('Just a moment')) {
-                  console.log('警告：仍卡在 Cloudflare 验证页，尝试点击屏幕中心...');
-                  await page.mouse.click(400, 300);
-                  await page.waitForTimeout(10000);
-              }
+              // 深度模拟真人操作
+              await page.mouse.wheel(0, 500);
+              await page.waitForTimeout(8000); 
 
               const html = await page.content();
               const $ = cheerio.load(html);
               const list = [];
               
               $('tr.el-table__row').each((i, el) => {
-                const number = $(el).find('.el-table_1_column_1 .cell').text().trim();
-                const status = $(el).find('.el-table_1_column_3 .cell span').text().trim();
-                if (status.includes('在线') && number) {
-                  list.push({ number, status: '在线' });
+                const num = $(el).find('.el-table_1_column_1 .cell').text().trim();
+                const sts = $(el).find('.el-table_1_column_3 .cell span').text().trim();
+                if (sts.includes('在线') && num) {
+                  list.push({ number: num, status: '在线' });
                 }
               });
 
-              console.log('结果：抓取到 ' + list.length + ' 个在线号码');
-
-              console.log('3. 同步至宝塔...');
-              await pushData(list);
-              console.log('--- 任务圆满完成 ---');
+              console.log('结果：提取到 ' + list.length + ' 个号码');
+              const status = await pushData(list);
+              console.log('推送状态:', status);
 
             } catch (e) {
-              console.error('❌ 报错:', e.message);
-              process.exit(1);
+              console.error('执行报错:', e.message);
             } finally {
               await browser.close();
+              console.log('--- 任务结束 ---');
             }
           }
           run();
           EOF
+
+      - name: Run Script
+        run: node spider_script.js
