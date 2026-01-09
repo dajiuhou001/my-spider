@@ -2,8 +2,8 @@ name: Auto Spider Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # 每15分钟自动运行一次
-  workflow_dispatch:      # 允许你手动点击按钮运行
+    - cron: '*/15 * * * *' # 每15分钟自动运行
+  workflow_dispatch:      # 支持手动运行
 
 jobs:
   run_spider:
@@ -23,64 +23,64 @@ jobs:
       - name: Create Script File
         run: |
           cat << 'EOF' > spider_script.js
-          // 解决 Node 18 的 File 对象定义问题
           if (typeof File === 'undefined') {
-              const { Blob } = require('buffer');
-              global.File = class extends Blob {
-                  constructor(parts, filename, options = {}) {
-                      super(parts, options);
-                      this.name = filename;
-                      this.lastModified = options.lastModified || Date.now();
-                  }
-              };
+            const { Blob } = require('buffer');
+            global.File = class extends Blob {
+              constructor(parts, filename, options = {}) {
+                super(parts, options);
+                this.name = filename;
+                this.lastModified = options.lastModified || Date.now();
+              }
+            };
           }
-
           const axios = require('axios');
           const cheerio = require('cheerio');
 
           async function run() {
-            console.log('--- 启动 GitHub 机器人任务 ---');
+            console.log('--- 启动完全拟人化抓取 ---');
             try {
-              console.log('正在携带有效 Cookie 访问目标网站...');
-              
               const res = await axios.get('https://s.url99.me/7cnr519a', {
-                headers: { 
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0z',
+                  'Cookie': 'cf_clearance=hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
                   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                  // 注入你提供的 cf_clearance Cookie
-                  'Cookie': 'cf_clearance=j1IDe.OFIFBaiQE_U6tNBBig_voL6IBZalhPHqBp8GQ-1767884562-1.2.1.1-f0gocjo0Wr1gX4TLbbDJDpxH.XzgHhrYEV_z0igy5oISxOSU_afT9xYJAd.770MfL80XoKkt4c8fpgLkugYpTAq79IJThRyQtMWaDpih4Wt.DIU9SBMQCmjnyVRr.J.1TET3prAskJgjuHjY0DxIWJdog1TQ6yqH9eP.znVQRU0fIajiKBErKC_qbiZUyPbxGseR_T2__qR0I1y5Ex.Ba9cF_8pviIcODs8h5jW8YOU'
+                  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
+                  'Cache-Control': 'no-cache',
+                  'Sec-Ch-Ua': '"Not.A/Brand";v="8", "Chromium";v="143", "Microsoft Edge";v="143"',
+                  'Sec-Ch-Ua-Mobile': '?0',
+                  'Sec-Ch-Ua-Platform': '"Windows"',
+                  'Sec-Fetch-Dest': 'document',
+                  'Sec-Fetch-Mode': 'navigate',
+                  'Sec-Fetch-Site': 'none',
+                  'Sec-Fetch-User': '?1',
+                  'Upgrade-Insecure-Requests': '1'
                 },
-                timeout: 20000
+                timeout: 30000
               });
 
-              console.log('响应状态:', res.status);
-              
+              console.log('访问成功，正在解析表格...');
               const $ = cheerio.load(res.data);
               const list = [];
               
-              // 精准解析 ElementUI 表格行
               $('tr.el-table__row').each((i, el) => {
                 const number = $(el).find('.el-table_1_column_1 .cell').text().trim();
                 const status = $(el).find('.el-table_1_column_3 .cell span').text().trim();
-                
                 if (status.includes('在线') && number) {
                   list.push({ number: number, status: '在线' });
                 }
               });
 
-              console.log('抓取成功！发现在线号码:', list.length, '个');
+              console.log('抓取完成，在线号码:', list.length, '个');
 
-              // 推送到你的宝塔服务器接口
-              if (list.length >= 0) { // 即使是0个也推送，用于清空旧数据
-                  console.log('正在同步到宝塔服务器...');
-                  const pushRes = await axios.post('http://204.141.218.119:4000/api/update', { data: list }, { timeout: 10000 });
-                  console.log('服务器反馈:', pushRes.data);
-              }
+              // 推送至宝塔
+              console.log('同步至服务器: http://204.141.218.119:4000');
+              const pushRes = await axios.post('http://204.141.218.119:4000/api/update', { data: list }, { timeout: 10000 });
+              console.log('服务器反馈:', JSON.stringify(pushRes.data));
 
             } catch (e) {
-              console.error('❌ 任务执行失败:', e.message);
+              console.error('❌ 任务失败:', e.message);
               if (e.response && e.response.status === 403) {
-                  console.error('错误提醒: Cookie 可能已失效，请重新从浏览器获取 cf_clearance');
+                console.log('Cloudflare 拦截提示:', e.response.data.substring(0, 300));
               }
               process.exit(1);
             }
