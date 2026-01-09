@@ -44,21 +44,17 @@ jobs:
                 }
               };
               const req = http.request(options, (res) => resolve(res.statusCode));
-              req.on('error', () => resolve('Connect Error'));
+              req.on('error', () => resolve('Error'));
               req.write(postData);
               req.end();
             });
           }
 
           async function run() {
-            console.log('--- 启动诊断增强模式 ---');
+            console.log('--- 启动虚拟列表深度滑动采集 ---');
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
-              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0',
-              extraHTTPHeaders: {
-                'X-Forwarded-For': '114.226.110.' + Math.floor(Math.random() * 254),
-                'Accept-Language': 'zh-CN,zh;q=0.9'
-              }
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
             });
 
             await context.addCookies([{
@@ -70,48 +66,64 @@ jobs:
 
             const page = await context.newPage();
             try {
-              console.log('1. 进入页面...');
-              await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'load', timeout: 60000 });
+              console.log('1. 进入系统...');
+              await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
               
-              console.log('2. 等待内容 (强制等待15秒)...');
-              await page.waitForTimeout(15000);
+              // 等待表格渲染
+              await page.waitForSelector('.el-table__body-wrapper', { timeout: 20000 });
 
-              const html = await page.content();
-              const $ = cheerio.load(html);
-              const list = [];
-              
-              // 尝试更广泛的选择器匹配
-              const rows = $('tr');
-              console.log('3. 检测到页面所有 <tr> 数量:', rows.length);
+              const onlineNumbers = new Set();
+              console.log('2. 开始模拟滑动采集...');
 
-              rows.each((i, el) => {
-                const text = $(el).text();
-                if (text.includes('在线')) {
-                  const cells = $(el).find('td');
-                  const num = cells.eq(0).text().trim() || '未知号码';
-                  list.push({ number: num, status: '在线' });
-                }
-              });
+              // 在浏览器环境中执行滑动逻辑
+              for (let i = 0; i < 10; i++) { // 假设滑动10次能覆盖全表
+                // 获取当前页面的在线号码
+                const currentData = await page.evaluate(() => {
+                  const results = [];
+                  document.querySelectorAll('tr.el-table__row').forEach(row => {
+                    if (row.innerText.includes('在线')) {
+                      const cells = row.querySelectorAll('td .cell');
+                      if (cells.length > 0) {
+                        results.push(cells[0].innerText.trim());
+                      }
+                    }
+                  });
+                  return results;
+                });
 
-              console.log(`4. 最终抓取数量: ${list.length}`);
+                // 加入去重集合
+                currentData.forEach(num => onlineNumbers.add(num));
 
-              if (list.length === 0) {
-                console.log('--- 关键诊断信息 (页面Body预览) ---');
-                console.log($('body').text().replace(/\s+/g, ' ').substring(0, 500));
+                // 执行滑动：寻找 ElementUI 的滚动容器并向下滚动 400 像素
+                await page.evaluate(() => {
+                  const scrollBox = document.querySelector('.el-table__body-wrapper');
+                  if (scrollBox) {
+                    scrollBox.scrollTop += 400;
+                  } else {
+                    window.scrollBy(0, 400); // 备用方案
+                  }
+                });
+
+                await page.waitForTimeout(1500); // 等待异步加载渲染
               }
 
-              await pushData(list);
-              console.log('5. 推送完成');
+              const finalData = Array.from(onlineNumbers).map(num => ({ number: num, status: '在线' }));
+              console.log(`3. 深度采集完成！共抓取到 ${finalData.length} 个不重复的在线号码`);
+              console.log('具体号码:', Array.from(onlineNumbers).join(', '));
+
+              if (finalData.length > 0) {
+                const status = await pushData(finalData);
+                console.log('4. 推送状态:', status);
+              }
 
             } catch (e) {
-              console.error('❌ 执行报错:', e.message);
+              console.error('❌ 执行失败:', e.message);
             } finally {
               await browser.close();
-              console.log('--- 任务结束 ---');
             }
           }
           run();
           EOF
 
-      - name: Run Script
+      - name: Run
         run: node spider_script.js
