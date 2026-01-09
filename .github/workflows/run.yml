@@ -1,35 +1,26 @@
-name: Auto Spider Bot
-on:
-  schedule:
-    - cron: '*/15 * * * *' # 每15分钟运行一次
-  workflow_dispatch:      # 允许手动触发
-
-jobs:
-  run_spider:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-
-      - name: Install dependencies
-        run: npm install axios cheerio
-
-      - name: Create Script File
-        # 这里使用 cat 命令创建文件，完美避免引号冲突
+- name: Create Script File
         run: |
           cat << 'EOF' > spider_script.js
+          // --- 1. 环境补丁：解决 Node 18 的 ReferenceError: File is not defined ---
+          if (typeof File === 'undefined') {
+              const { Blob } = require('buffer');
+              global.File = class extends Blob {
+                  constructor(parts, filename, options = {}) {
+                      super(parts, options);
+                      this.name = filename;
+                      this.lastModified = options.lastModified || Date.now();
+                  }
+              };
+          }
+
           const axios = require('axios');
           const cheerio = require('cheerio');
 
           async function run() {
             console.log('--- 启动爬虫任务 ---');
             try {
-              // 1. 抓取目标网站
+              // 2. 抓取目标网站
+              console.log('正在抓取数据...');
               const res = await axios.post('https://s.url99.me/7cnr519a', 'password=160301', {
                 headers: { 
                   'Content-Type': 'application/x-www-form-urlencoded',
@@ -50,18 +41,23 @@ jobs:
 
               console.log('抓取成功，在线号码数量:', list.length);
 
-              // 2. 推送到宝塔服务器
-              // 注意：IP 地址已修正（去掉了多余的 http://）
-              await axios.post('http://204.141.218.119:4000/api/update', { data: list });
-              console.log('数据已成功同步至宝塔服务器');
+              // 3. 推送到宝塔服务器
+              if (list.length > 0) {
+                  console.log('正在同步到服务器...');
+                  await axios.post('http://204.141.218.119:4000/api/update', { data: list }, { timeout: 10000 });
+                  console.log('数据已同步成功！');
+              } else {
+                  console.log('本次未发现在线号码，跳过同步。');
+              }
 
             } catch (e) {
-              console.error('任务执行失败:', e.message);
+              console.error('❌ 任务失败:', e.message);
+              // 如果是推送失败，打印详细信息
+              if (e.config && e.config.url.includes('api/update')) {
+                  console.error('请检查宝塔服务器 4000 端口是否放行，且项目正在运行');
+              }
               process.exit(1);
             }
           }
           run();
           EOF
-
-      - name: Execute Script
-        run: node spider_script.js
