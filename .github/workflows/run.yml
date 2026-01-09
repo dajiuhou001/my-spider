@@ -15,11 +15,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: 20  # 升级到 Node 20，更稳定
 
       - name: Install Dependencies
         run: |
-          npm install playwright axios cheerio
+          npm install playwright cheerio
 
       - name: Install Browser
         run: npx playwright install chromium --with-deps
@@ -28,32 +28,38 @@ jobs:
         run: |
           cat << 'EOF' > spider_script.js
           const { chromium } = require('playwright');
-          const axios = require('axios');
           const cheerio = require('cheerio');
 
           async function run() {
-            console.log('--- 启动浏览器引擎 (绕过五秒盾) ---');
+            console.log('--- 启动 Playwright 引擎 ---');
+            // 为了绕过 ReferenceError，我们手动定义一个空的 File 对象
+            if (typeof global.File === 'undefined') {
+              global.File = class extends Blob {};
+            }
+
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
               userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
             });
+
+            // 注入 Cookie
+            await context.addCookies([{
+              name: 'cf_clearance',
+              value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
+              domain: 's.url99.me',
+              path: '/'
+            }]);
+
             const page = await context.newPage();
 
             try {
-              // 设置 Cookie
-              await context.addCookies([{
-                name: 'cf_clearance',
-                value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
-                domain: 's.url99.me',
-                path: '/'
-              }]);
-
-              console.log('正在打开页面并等待 Cloudflare 验证...');
+              console.log('1. 正在访问目标页面 (包含 Cloudflare 挑战)...');
               await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
 
-              // 等待表格加载出来
-              await page.waitForSelector('tr.el-table__row', { timeout: 10000 }).catch(() => console.log('表格加载超时，可能仍被拦截'));
+              // 增加 5 秒等待，确保 JS 渲染完成
+              await page.waitForTimeout(5000);
 
+              console.log('2. 正在提取数据...');
               const html = await page.content();
               const $ = cheerio.load(html);
               const list = [];
@@ -66,16 +72,23 @@ jobs:
                 }
               });
 
-              console.log('抓取完成，在线号码:', list.length);
+              console.log('抓取成功，发现在线号码数量:', list.length);
 
-              if (list.length >= 0) {
-                console.log('正在推送至宝塔...');
-                await axios.post('http://204.141.218.119:4000/api/update', { data: list }, { timeout: 10000 });
-                console.log('同步成功！');
-              }
+              // 3. 使用浏览器的 fetch 接口将数据送回宝塔
+              // 这样做可以避免 Node.js 端的库冲突
+              console.log('3. 正在同步到宝塔服务器...');
+              await page.evaluate(async (data) => {
+                await fetch('http://204.141.218.119:4000/api/update', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ data })
+                });
+              }, list);
+
+              console.log('--- 任务圆满完成！ ---');
 
             } catch (e) {
-              console.error('任务失败:', e.message);
+              console.error('❌ 运行中发生错误:', e.message);
               process.exit(1);
             } finally {
               await browser.close();
