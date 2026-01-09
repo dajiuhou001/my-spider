@@ -2,8 +2,8 @@ name: Auto Spider Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # 每15分钟自动运行
-  workflow_dispatch:      # 支持手动运行
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   run_spider:
@@ -17,72 +17,68 @@ jobs:
         with:
           node-version: 18
 
-      - name: Install dependencies
-        run: npm install axios cheerio
+      - name: Install Dependencies
+        run: |
+          npm install playwright axios cheerio
+
+      - name: Install Browser
+        run: npx playwright install chromium --with-deps
 
       - name: Create Script File
         run: |
           cat << 'EOF' > spider_script.js
-          if (typeof File === 'undefined') {
-            const { Blob } = require('buffer');
-            global.File = class extends Blob {
-              constructor(parts, filename, options = {}) {
-                super(parts, options);
-                this.name = filename;
-                this.lastModified = options.lastModified || Date.now();
-              }
-            };
-          }
+          const { chromium } = require('playwright');
           const axios = require('axios');
           const cheerio = require('cheerio');
 
           async function run() {
-            console.log('--- 启动完全拟人化抓取 ---');
-            try {
-              const res = await axios.get('https://s.url99.me/7cnr519a', {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0z',
-                  'Cookie': 'cf_clearance=hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
-                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
-                  'Cache-Control': 'no-cache',
-                  'Sec-Ch-Ua': '"Not.A/Brand";v="8", "Chromium";v="143", "Microsoft Edge";v="143"',
-                  'Sec-Ch-Ua-Mobile': '?0',
-                  'Sec-Ch-Ua-Platform': '"Windows"',
-                  'Sec-Fetch-Dest': 'document',
-                  'Sec-Fetch-Mode': 'navigate',
-                  'Sec-Fetch-Site': 'none',
-                  'Sec-Fetch-User': '?1',
-                  'Upgrade-Insecure-Requests': '1'
-                },
-                timeout: 30000
-              });
+            console.log('--- 启动浏览器引擎 (绕过五秒盾) ---');
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
+            });
+            const page = await context.newPage();
 
-              console.log('访问成功，正在解析表格...');
-              const $ = cheerio.load(res.data);
+            try {
+              // 设置 Cookie
+              await context.addCookies([{
+                name: 'cf_clearance',
+                value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
+                domain: 's.url99.me',
+                path: '/'
+              }]);
+
+              console.log('正在打开页面并等待 Cloudflare 验证...');
+              await page.goto('https://s.url99.me/7cnr519a', { waitUntil: 'networkidle', timeout: 60000 });
+
+              // 等待表格加载出来
+              await page.waitForSelector('tr.el-table__row', { timeout: 10000 }).catch(() => console.log('表格加载超时，可能仍被拦截'));
+
+              const html = await page.content();
+              const $ = cheerio.load(html);
               const list = [];
               
               $('tr.el-table__row').each((i, el) => {
                 const number = $(el).find('.el-table_1_column_1 .cell').text().trim();
                 const status = $(el).find('.el-table_1_column_3 .cell span').text().trim();
                 if (status.includes('在线') && number) {
-                  list.push({ number: number, status: '在线' });
+                  list.push({ number, status: '在线' });
                 }
               });
 
-              console.log('抓取完成，在线号码:', list.length, '个');
+              console.log('抓取完成，在线号码:', list.length);
 
-              // 推送至宝塔
-              console.log('同步至服务器: http://204.141.218.119:4000');
-              const pushRes = await axios.post('http://204.141.218.119:4000/api/update', { data: list }, { timeout: 10000 });
-              console.log('服务器反馈:', JSON.stringify(pushRes.data));
+              if (list.length >= 0) {
+                console.log('正在推送至宝塔...');
+                await axios.post('http://204.141.218.119:4000/api/update', { data: list }, { timeout: 10000 });
+                console.log('同步成功！');
+              }
 
             } catch (e) {
-              console.error('❌ 任务失败:', e.message);
-              if (e.response && e.response.status === 403) {
-                console.log('Cloudflare 拦截提示:', e.response.data.substring(0, 300));
-              }
+              console.error('任务失败:', e.message);
               process.exit(1);
+            } finally {
+              await browser.close();
             }
           }
           run();
