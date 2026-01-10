@@ -1,9 +1,9 @@
-name: Dynamic Spider Bot
+name: GitHub Dynamic Spider
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
+    - cron: '*/15 * * * *' # 每15分钟运行一次
+  workflow_dispatch:      # 支持手动触发
 
 jobs:
   run_spider:
@@ -17,76 +17,100 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Libs
-        run: npm install playwright axios
+      - name: Install Dependencies
+        run: npm install playwright-extra puppeteer-extra-plugin-stealth axios cheerio
 
       - name: Install Browser
         run: npx playwright install chromium --with-deps
 
-      - name: Run Dynamic Spider
+      - name: Execution Script
         run: |
           cat << 'EOF' > spider_script.js
-          const { chromium } = require('playwright');
+          const { chromium } = require('playwright-extra');
+          const stealth = require('puppeteer-extra-plugin-stealth')();
           const axios = require('axios');
+          const cheerio = require('cheerio');
 
-          // 修改为你的服务器 IP
+          chromium.use(stealth);
+
+          // 你的服务器 IP
           const SERVER_IP = '204.141.218.119'; 
 
           async function run() {
             try {
-              console.log('1. 从宝塔下载动态配置...');
+              console.log('1. 正在拉取宝塔配置...');
               const configRes = await axios.get(`http://${SERVER_IP}:4000/config.json`);
               const { url, password } = configRes.data;
-              
-              if (!url || !password) throw new Error('配置无效');
-              console.log(`执行目标: ${url}`);
+              console.log(`[任务下发] URL: ${url}`);
 
               const browser = await chromium.launch({ headless: true });
               const context = await browser.newContext({
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
               });
 
-              // 注入之前成功的 Cookie
+              // 注入你之前成功的 cf_clearance Cookie（建议定期更新此值）
               await context.addCookies([{
                 name: 'cf_clearance',
                 value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
-                domain: 's.url99.me', path: '/'
+                domain: 's.url99.me', 
+                path: '/'
               }]);
 
               const page = await context.newPage();
-              await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+              console.log('2. 访问目标页面...');
+              await page.goto(url, { waitUntil: 'load', timeout: 60000 });
 
-              // 自动解锁
-              console.log('2. 正在解锁工单...');
+              console.log('3. 尝试暴力解锁密码...');
               const inputSelector = 'input[type="password"], .el-input__inner';
               await page.waitForSelector(inputSelector, { timeout: 15000 });
               await page.fill(inputSelector, password);
-              await page.keyboard.press('Enter');
-              await page.waitForTimeout(10000);
-
-              // 采集
-              console.log('3. 扫描在线号码...');
-              const results = await page.evaluate(() => {
-                const list = [];
-                const now = new Date().toLocaleString();
-                document.querySelectorAll('tr').forEach(row => {
-                  if (row.innerText.includes('在线')) {
-                    const num = row.cells[0]?.innerText.trim();
-                    if (num && /\d/.test(num)) list.push({ number: num, time: now });
-                  }
-                });
-                return list;
+              
+              // 模拟原生点击
+              await page.evaluate(() => {
+                const btns = Array.from(document.querySelectorAll('button'));
+                const okBtn = btns.find(b => b.innerText.includes('确定') || b.classList.contains('el-button--primary'));
+                if (okBtn) okBtn.click();
               });
 
-              console.log(`4. 采集完成，发现 ${results.length} 条数据`);
-              
-              // 回传到宝塔
-              await axios.post(`http://${SERVER_IP}:4000/api/update`, { data: results });
-              console.log('5. 数据已回传至服务器');
+              console.log('4. 等待数据刷新 (15s)...');
+              await page.waitForTimeout(15000);
+
+              // 滚动采集逻辑
+              const onlineNumbers = new Set();
+              for (let s = 0; s < 5; s++) {
+                const content = await page.content();
+                const $ = cheerio.load(content);
+                const now = new Date().toLocaleString();
+                
+                $('tr').each((i, el) => {
+                  if ($(el).text().includes('在线')) {
+                    const num = $(el).find('td').eq(0).text().trim();
+                    if (num && /\d/.test(num)) {
+                       onlineNumbers.add(JSON.stringify({ number: num, time: now }));
+                    }
+                  }
+                });
+
+                await page.evaluate(() => {
+                  const box = document.querySelector('.el-table__body-wrapper');
+                  if (box) box.scrollTop += 800;
+                });
+                await page.waitForTimeout(1500);
+              }
+
+              const finalData = Array.from(onlineNumbers).map(s => JSON.parse(s));
+              console.log(`5. 采集完成，发现 ${finalData.length} 条数据`);
+
+              if (finalData.length > 0) {
+                await axios.post(`http://${SERVER_IP}:4000/api/update`, { data: finalData });
+                console.log('✅ 数据同步成功');
+              } else {
+                console.log('⚠️ 未发现数据，请检查工单是否已过期或密码是否正确');
+              }
 
               await browser.close();
             } catch (e) {
-              console.error('❌ 执行失败:', e.message);
+              console.error('❌ 执行过程中出错:', e.message);
             }
           }
           run();
