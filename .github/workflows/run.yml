@@ -18,29 +18,84 @@ jobs:
           node-version: 20
 
       - name: Install Libs
-        run: npm install playwright cheerio
+        run: npm install playwright cheerio axios
 
       - name: Install Browser
         run: npx playwright install chromium --with-deps
+
+      - name: Get Config from Server
+        id: get_config
+        run: |
+          # 从服务器获取配置
+          # 注意：这里需要替换成你的服务器地址
+          SERVER_URL="http://你的服务器IP:4000"
+          echo "正在从服务器获取配置..."
+          
+          # 使用 curl 获取配置，如果失败使用默认值
+          CONFIG_JSON=$(curl -s "$204.141.218.119/api/config" || echo '{}')
+          
+          # 提取配置值
+          TARGET_URL=$(echo $CONFIG_JSON | grep -o '"targetUrl":"[^"]*"' | cut -d'"' -f4 || echo 'https://s.url99.me/7cnr519a')
+          QUERY_PASSWORD=$(echo $CONFIG_JSON | grep -o '"queryPassword":"[^"]*"' | cut -d'"' -f4 || echo '160301')
+          CF_COOKIE=$(echo $CONFIG_JSON | grep -o '"cfCookie":"[^"]*"' | cut -d'"' -f4 || echo 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo')
+          COOKIE_DOMAIN=$(echo $CONFIG_JSON | grep -o '"cookieDomain":"[^"]*"' | cut-d'"' -f4 || echo 's.url99.me')
+          
+          # 设置输出变量
+          echo "TARGET_URL=$TARGET_URL" >> $GITHUB_ENV
+          echo "QUERY_PASSWORD=$QUERY_PASSWORD" >> $GITHUB_ENV
+          echo "CF_COOKIE=$CF_COOKIE" >> $GITHUB_ENV
+          echo "COOKIE_DOMAIN=$COOKIE_DOMAIN" >> $GITHUB_ENV
+          echo "SERVER_URL=$SERVER_URL" >> $GITHUB_ENV
+          
+          echo "配置获取完成:"
+          echo "目标URL: $TARGET_URL"
+          echo "密码: ***" # 不显示密码
+          echo "Cookie长度: ${#CF_COOKIE} 字符"
+          echo "Cookie域: $COOKIE_DOMAIN"
 
       - name: Create Script
         run: |
           cat << 'EOF' > spider_script.js
           const { chromium } = require('playwright');
           const http = require('http');
+          
+          // 从环境变量读取配置
+          const QUERY_PASSWORD = process.env.QUERY_PASSWORD || '160301';
+          const TARGET_URL = process.env.TARGET_URL || 'https://s.url99.me/7cnr519a';
+          const CF_COOKIE = process.env.CF_COOKIE || '';
+          const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || 's.url99.me';
+          const SERVER_URL = process.env.SERVER_URL || 'http://204.141.218.119:4000';
 
-          const QUERY_PASSWORD = '160301'; 
-          const TARGET_URL = 'https://s.url99.me/7cnr519a';
+          console.log('=== 爬虫启动 ===');
+          console.log('目标URL:', TARGET_URL);
+          console.log('密码:', QUERY_PASSWORD ? '***已设置***' : '未设置');
+          console.log('Cookie长度:', CF_COOKIE.length);
+          console.log('Cookie域:', COOKIE_DOMAIN);
+          console.log('服务器:', SERVER_URL);
 
           function pushData(data) {
             return new Promise((resolve) => {
               const postData = JSON.stringify({ data });
+              // 从SERVER_URL解析主机名和端口
+              const url = new URL(SERVER_URL);
               const options = {
-                hostname: '204.141.218.119', port: 4000, path: '/api/update', method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) }
+                hostname: url.hostname,
+                port: url.port || 4000,
+                path: '/api/update',
+                method: 'POST',
+                headers: { 
+                  'Content-Type': 'application/json', 
+                  'Content-Length': Buffer.byteLength(postData) 
+                }
               };
-              const req = http.request(options, (res) => resolve(res.statusCode));
-              req.on('error', () => resolve('Error'));
+              const req = http.request(options, (res) => {
+                console.log(`推送数据状态码: ${res.statusCode}`);
+                resolve(res.statusCode);
+              });
+              req.on('error', (err) => {
+                console.error('推送数据失败:', err.message);
+                resolve('Error');
+              });
               req.write(postData);
               req.end();
             });
@@ -48,21 +103,38 @@ jobs:
 
           async function run() {
             console.log('--- 启动暴力穿透解锁模式 ---');
-            const browser = await chromium.launch({ headless: true });
+            
+            // 验证配置
+            if (!CF_COOKIE) {
+              console.error('❌ 错误: Cookie未配置！请在网页中设置cf_clearance cookie');
+              return;
+            }
+            
+            if (!TARGET_URL || TARGET_URL === 'https://s.url99.me/7cnr519a') {
+              console.warn('⚠️ 警告: 使用默认URL，请在网页中配置目标URL');
+            }
+
+            const browser = await chromium.launch({ 
+              headless: true,
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            
             const context = await browser.newContext({
               userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
               viewport: { width: 1280, height: 800 }
             });
 
+            // 使用动态配置的Cookie
             await context.addCookies([{
               name: 'cf_clearance',
-              value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
-              domain: 's.url99.me', path: '/'
+              value: CF_COOKIE,
+              domain: COOKIE_DOMAIN,
+              path: '/'
             }]);
 
             const page = await context.newPage();
             try {
-              console.log('1. 进入页面...');
+              console.log('1. 进入页面:', TARGET_URL);
               await page.goto(TARGET_URL, { waitUntil: 'load', timeout: 60000 });
 
               // 2. 填写密码
@@ -72,15 +144,16 @@ jobs:
               await page.fill(inputSelector, QUERY_PASSWORD);
               console.log('密码已输入');
 
-              // 3. 核心改进：执行 JavaScript 暴力点击确定按钮
+              // 3. 执行 JavaScript 暴力点击确定按钮
               console.log('3. 执行强制穿透点击...');
               await page.evaluate(() => {
-                // 寻找弹窗内的“确定”按钮
                 const btns = Array.from(document.querySelectorAll('.el-message-box__btns button, .el-button--primary'));
                 const okBtn = btns.find(b => b.innerText.includes('确定'));
                 if (okBtn) {
-                   okBtn.click(); // 原生 JS 点击，不惧怕拦截
+                   okBtn.click();
+                   return true;
                 }
+                return false;
               });
 
               // 等待数据加载
@@ -110,18 +183,40 @@ jobs:
               console.log(`5. 抓取完成: 发现 ${finalData.length} 个号码`);
 
               if (finalData.length > 0) {
-                  await pushData(finalData);
-                  console.log('同步成功');
+                  const result = await pushData(finalData);
+                  if (result === 200) {
+                    console.log('✅ 数据同步成功');
+                  } else {
+                    console.log('⚠️ 数据同步异常，状态码:', result);
+                  }
+              } else {
+                console.log('⚠️ 未找到在线号码');
               }
 
             } catch (e) {
               console.error('❌ 任务失败:', e.message);
+              console.error('详细错误:', e.stack);
+              
+              // 尝试截图帮助调试
+              try {
+                await page.screenshot({ path: 'error_screenshot.png' });
+                console.log('错误截图已保存: error_screenshot.png');
+              } catch (screenshotErr) {
+                // 忽略截图错误
+              }
             } finally {
               await browser.close();
+              console.log('=== 爬虫结束 ===');
             }
           }
           run();
           EOF
 
-      - name: Run
+      - name: Run Spider
         run: node spider_script.js
+        env:
+          TARGET_URL: ${{ env.TARGET_URL }}
+          QUERY_PASSWORD: ${{ env.QUERY_PASSWORD }}
+          CF_COOKIE: ${{ env.CF_COOKIE }}
+          COOKIE_DOMAIN: ${{ env.COOKIE_DOMAIN }}
+          SERVER_URL: ${{ env.SERVER_URL }}
