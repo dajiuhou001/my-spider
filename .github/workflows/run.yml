@@ -1,4 +1,4 @@
-name: Auto Spider Bot
+name: Dynamic Spider Bot
 
 on:
   schedule:
@@ -18,110 +18,77 @@ jobs:
           node-version: 20
 
       - name: Install Libs
-        run: npm install playwright cheerio
+        run: npm install playwright axios
 
       - name: Install Browser
         run: npx playwright install chromium --with-deps
 
-      - name: Create Script
+      - name: Run Dynamic Spider
         run: |
           cat << 'EOF' > spider_script.js
           const { chromium } = require('playwright');
-          const http = require('http');
+          const axios = require('axios');
 
-          const QUERY_PASSWORD = '160301'; 
-          const TARGET_URL = 'https://s.url99.me/7cnr519a';
-
-          function pushData(data) {
-            return new Promise((resolve) => {
-              const postData = JSON.stringify({ data });
-              const options = {
-                hostname: '204.141.218.119', port: 4000, path: '/api/update', method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) }
-              };
-              const req = http.request(options, (res) => resolve(res.statusCode));
-              req.on('error', () => resolve('Error'));
-              req.write(postData);
-              req.end();
-            });
-          }
+          // 修改为你的服务器 IP
+          const SERVER_IP = '204.141.218.119'; 
 
           async function run() {
-            console.log('--- 启动暴力穿透解锁模式 ---');
-            const browser = await chromium.launch({ headless: true });
-            const context = await browser.newContext({
-              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              viewport: { width: 1280, height: 800 }
-            });
-
-            await context.addCookies([{
-              name: 'cf_clearance',
-              value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
-              domain: 's.url99.me', path: '/'
-            }]);
-
-            const page = await context.newPage();
             try {
-              console.log('1. 进入页面...');
-              await page.goto(TARGET_URL, { waitUntil: 'load', timeout: 60000 });
+              console.log('1. 从宝塔下载动态配置...');
+              const configRes = await axios.get(`http://${SERVER_IP}:4000/config.json`);
+              const { url, password } = configRes.data;
+              
+              if (!url || !password) throw new Error('配置无效');
+              console.log(`执行目标: ${url}`);
 
-              // 2. 填写密码
-              console.log('2. 等待密码框...');
-              const inputSelector = 'input[type="password"], .el-message-box__input input';
-              await page.waitForSelector(inputSelector, { timeout: 15000 });
-              await page.fill(inputSelector, QUERY_PASSWORD);
-              console.log('密码已输入');
-
-              // 3. 核心改进：执行 JavaScript 暴力点击确定按钮
-              console.log('3. 执行强制穿透点击...');
-              await page.evaluate(() => {
-                // 寻找弹窗内的“确定”按钮
-                const btns = Array.from(document.querySelectorAll('.el-message-box__btns button, .el-button--primary'));
-                const okBtn = btns.find(b => b.innerText.includes('确定'));
-                if (okBtn) {
-                   okBtn.click(); // 原生 JS 点击，不惧怕拦截
-                }
+              const browser = await chromium.launch({ headless: true });
+              const context = await browser.newContext({
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
               });
 
-              // 等待数据加载
-              console.log('4. 等待 15 秒数据刷新...');
-              await page.waitForTimeout(15000);
+              // 注入之前成功的 Cookie
+              await context.addCookies([{
+                name: 'cf_clearance',
+                value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
+                domain: 's.url99.me', path: '/'
+              }]);
 
-              // 4. 解析表格
-              const onlineNumbers = new Set();
-              for (let s = 0; s < 5; s++) {
-                const content = await page.content();
-                const $ = require('cheerio').load(content);
-                $('tr').each((i, el) => {
-                  if ($(el).text().includes('在线')) {
-                    const num = $(el).find('td').eq(0).text().trim();
-                    if (num && /\d/.test(num)) onlineNumbers.add(num);
+              const page = await context.newPage();
+              await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+
+              // 自动解锁
+              console.log('2. 正在解锁工单...');
+              const inputSelector = 'input[type="password"], .el-input__inner';
+              await page.waitForSelector(inputSelector, { timeout: 15000 });
+              await page.fill(inputSelector, password);
+              await page.keyboard.press('Enter');
+              await page.waitForTimeout(10000);
+
+              // 采集
+              console.log('3. 扫描在线号码...');
+              const results = await page.evaluate(() => {
+                const list = [];
+                const now = new Date().toLocaleString();
+                document.querySelectorAll('tr').forEach(row => {
+                  if (row.innerText.includes('在线')) {
+                    const num = row.cells[0]?.innerText.trim();
+                    if (num && /\d/.test(num)) list.push({ number: num, time: now });
                   }
                 });
-                // 滚动
-                await page.evaluate(() => {
-                  const box = document.querySelector('.el-table__body-wrapper');
-                  if (box) box.scrollTop += 500;
-                });
-                await page.waitForTimeout(1500);
-              }
+                return list;
+              });
 
-              const finalData = Array.from(onlineNumbers).map(n => ({number: n, status: '在线'}));
-              console.log(`5. 抓取完成: 发现 ${finalData.length} 个号码`);
+              console.log(`4. 采集完成，发现 ${results.length} 条数据`);
+              
+              // 回传到宝塔
+              await axios.post(`http://${SERVER_IP}:4000/api/update`, { data: results });
+              console.log('5. 数据已回传至服务器');
 
-              if (finalData.length > 0) {
-                  await pushData(finalData);
-                  console.log('同步成功');
-              }
-
-            } catch (e) {
-              console.error('❌ 任务失败:', e.message);
-            } finally {
               await browser.close();
+            } catch (e) {
+              console.error('❌ 执行失败:', e.message);
             }
           }
           run();
           EOF
-
-      - name: Run
-        run: node spider_script.js
+          node spider_script.js
