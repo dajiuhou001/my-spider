@@ -18,7 +18,6 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        # 确保同时安装 playwright 和 playwright-extra
         run: npm install playwright playwright-extra puppeteer-extra-plugin-stealth axios cheerio
 
       - name: Install Browser
@@ -27,23 +26,20 @@ jobs:
       - name: Execution Script
         run: |
           cat << 'EOF' > spider_script.js
-          // 修正：明确从 playwright 引入 chromium 并修补
           const { chromium } = require('playwright');
-          const { Array.from } = require('playwright-extra'); 
           const { addExtra } = require('playwright-extra');
           const stealth = require('puppeteer-extra-plugin-stealth')();
           const axios = require('axios');
           const cheerio = require('cheerio');
 
-          // 使用 addExtra 修补原生 chromium
           const chromiumExtra = addExtra(chromium);
           chromiumExtra.use(stealth);
 
-          const SERVER_IP = '204.141.218.119'; 
+          const SERVER_IP = '204.141.218.119'; // 这里请改为你的真实服务器IP
 
           async function run() {
             try {
-              console.log('1. 正在拉取宝塔配置...');
+              console.log('1. 拉取宝塔配置...');
               const configRes = await axios.get(`http://${SERVER_IP}:4000/config.json`);
               const { url, password } = configRes.data;
               console.log(`[任务下发] URL: ${url}`);
@@ -53,19 +49,18 @@ jobs:
                 userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
               });
 
-              // 注入 Cookie
+              // 注入过盾 Cookie
               await context.addCookies([{
                 name: 'cf_clearance',
                 value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
-                domain: 's.url99.me', 
-                path: '/'
+                domain: 's.url99.me', path: '/'
               }]);
 
               const page = await context.newPage();
-              console.log('2. 访问目标页面...');
+              console.log('2. 访问页面...');
               await page.goto(url, { waitUntil: 'load', timeout: 60000 });
 
-              console.log('3. 尝试暴力解锁密码...');
+              console.log('3. 尝试解锁密码...');
               const inputSelector = 'input[type="password"], .el-input__inner';
               await page.waitForSelector(inputSelector, { timeout: 15000 });
               await page.fill(inputSelector, password);
@@ -76,7 +71,7 @@ jobs:
                 if (okBtn) okBtn.click();
               });
 
-              console.log('4. 等待数据渲染 (15s)...');
+              console.log('4. 等待数据刷新 (15s)...');
               await page.waitForTimeout(15000);
 
               const onlineNumbers = new Set();
@@ -93,7 +88,6 @@ jobs:
                     }
                   }
                 });
-
                 await page.evaluate(() => {
                   const box = document.querySelector('.el-table__body-wrapper');
                   if (box) box.scrollTop += 800;
@@ -106,14 +100,13 @@ jobs:
 
               if (finalData.length > 0) {
                 await axios.post(`http://${SERVER_IP}:4000/api/update`, { data: finalData });
-                console.log('✅ 数据同步成功');
+                console.log('✅ 数据已回传');
               } else {
-                console.log('⚠️ 未发现数据，请检查工单或 Cookie');
+                console.log('⚠️ 未发现数据，请检查 Cookie 是否过期');
               }
-
               await browser.close();
             } catch (e) {
-              console.error('❌ 执行错误:', e.message);
+              console.error('❌ 运行错误:', e.message);
             }
           }
           run();
