@@ -2,8 +2,8 @@ name: GitHub Dynamic Spider
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # 每15分钟运行一次
-  workflow_dispatch:      # 支持手动触发
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   run_spider:
@@ -18,7 +18,8 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: npm install playwright-extra puppeteer-extra-plugin-stealth axios cheerio
+        # 确保同时安装 playwright 和 playwright-extra
+        run: npm install playwright playwright-extra puppeteer-extra-plugin-stealth axios cheerio
 
       - name: Install Browser
         run: npx playwright install chromium --with-deps
@@ -26,14 +27,18 @@ jobs:
       - name: Execution Script
         run: |
           cat << 'EOF' > spider_script.js
-          const { chromium } = require('playwright-extra');
+          // 修正：明确从 playwright 引入 chromium 并修补
+          const { chromium } = require('playwright');
+          const { Array.from } = require('playwright-extra'); 
+          const { addExtra } = require('playwright-extra');
           const stealth = require('puppeteer-extra-plugin-stealth')();
           const axios = require('axios');
           const cheerio = require('cheerio');
 
-          chromium.use(stealth);
+          // 使用 addExtra 修补原生 chromium
+          const chromiumExtra = addExtra(chromium);
+          chromiumExtra.use(stealth);
 
-          // 你的服务器 IP
           const SERVER_IP = '204.141.218.119'; 
 
           async function run() {
@@ -43,12 +48,12 @@ jobs:
               const { url, password } = configRes.data;
               console.log(`[任务下发] URL: ${url}`);
 
-              const browser = await chromium.launch({ headless: true });
+              const browser = await chromiumExtra.launch({ headless: true });
               const context = await browser.newContext({
                 userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
               });
 
-              // 注入你之前成功的 cf_clearance Cookie（建议定期更新此值）
+              // 注入 Cookie
               await context.addCookies([{
                 name: 'cf_clearance',
                 value: 'hGqOKGlLUQOdBIMiOFvKOcW3kPBkvDPr5XgRTJMCQ_U-1767995732-1.2.1.1-zMyCvc_wL_LFCvoBTlaImCPAkZMwlUBilOFVRBjpccUJliQBGGriP9Ma6y_iqalTDGI4A8Q31RYfIWvaSplc4qIoKTmE._DLgYqMmbJccjcrm_TDsoCAr2oIOnzgh2cRmvo0xzROXn40cD.OyhtOvWYXDK49gq2GfliqGO8t85HGDhdeDd7vybMQV3SLWSYG6mhoR6KHPs9SgUkrk4aZEr9vaNrMyYYUFMIBNqpGHOo',
@@ -65,17 +70,15 @@ jobs:
               await page.waitForSelector(inputSelector, { timeout: 15000 });
               await page.fill(inputSelector, password);
               
-              // 模拟原生点击
               await page.evaluate(() => {
                 const btns = Array.from(document.querySelectorAll('button'));
                 const okBtn = btns.find(b => b.innerText.includes('确定') || b.classList.contains('el-button--primary'));
                 if (okBtn) okBtn.click();
               });
 
-              console.log('4. 等待数据刷新 (15s)...');
+              console.log('4. 等待数据渲染 (15s)...');
               await page.waitForTimeout(15000);
 
-              // 滚动采集逻辑
               const onlineNumbers = new Set();
               for (let s = 0; s < 5; s++) {
                 const content = await page.content();
@@ -105,12 +108,12 @@ jobs:
                 await axios.post(`http://${SERVER_IP}:4000/api/update`, { data: finalData });
                 console.log('✅ 数据同步成功');
               } else {
-                console.log('⚠️ 未发现数据，请检查工单是否已过期或密码是否正确');
+                console.log('⚠️ 未发现数据，请检查工单或 Cookie');
               }
 
               await browser.close();
             } catch (e) {
-              console.error('❌ 执行过程中出错:', e.message);
+              console.error('❌ 执行错误:', e.message);
             }
           }
           run();
